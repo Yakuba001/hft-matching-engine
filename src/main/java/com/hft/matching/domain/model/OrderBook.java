@@ -4,8 +4,8 @@ public class OrderBook {
 
     private final OrderPool orderPool;
     private final PriceLevelPool priceLevelPool;
-    private int headBidLevel = -1;
-    private int headAskLevel = -1;
+    private int headBidLevel = -1; // Highest bid (buy)
+    private int headAskLevel = -1; // Lowest ask (sell)
 
     public OrderBook(int orderPoolSize, int priceLevelPoolSize) {
         this.orderPool = new OrderPool(orderPoolSize);
@@ -42,6 +42,39 @@ public class OrderBook {
         order.setPriceLevelIndex(-1);
         orderPool.release(orderIndex);
         return true;
+    }
+
+    public int matchMarketOrder(byte side, int qty) {
+        boolean isBid = side == Order.SIDE_BUY;
+        int currLevelIdx = isBid ? headAskLevel : headBidLevel;
+        byte targetSide = isBid ? Order.SIDE_SELL : Order.SIDE_BUY;
+        int nextLevelIdx;
+        int initialQty = qty;
+        while (currLevelIdx != -1 && qty > 0) {
+            PriceLevel currLevel = priceLevelPool.get(currLevelIdx);
+            nextLevelIdx = currLevel.getNextLevelIndex();
+            int orderIdx = currLevel.getHeadIndex();
+            while (orderIdx != -1 && qty > 0) {
+                Order order = orderPool.get(orderIdx);
+                int orderNextIdx = order.getNextIndex();
+                long orderQty = order.getQuantity();
+                int matchQty = Math.min(qty, (int) orderQty);
+                qty -= matchQty;
+                order.setQuantity(orderQty - matchQty);
+                currLevel.setTotalQuantity(currLevel.getTotalQuantity() - matchQty);
+                if (order.getQuantity() == 0) {
+                    currLevel.removeOrder(orderIdx, orderPool);
+                    order.setPriceLevelIndex(-1);
+                    orderPool.release(orderIdx);
+                }
+                orderIdx = orderNextIdx;
+            }
+            if (currLevel.getHeadIndex() == -1) {
+                removeLevel(currLevelIdx, targetSide);
+            }
+            currLevelIdx = nextLevelIdx;
+        }
+        return initialQty - qty;
     }
 
     public long getBestBidPrice() {

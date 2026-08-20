@@ -1,6 +1,5 @@
 package com.hft.matching.domain.model;
 
-
 public final class PriceLevelPool {
 
     private final PriceLevel[] pool;
