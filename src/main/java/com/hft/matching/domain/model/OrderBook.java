@@ -13,21 +13,56 @@ public class OrderBook {
     }
 
     public int addOrder(long orderId, long price, long quantity, byte side, byte type) {
-        int orderIndex = orderPool.acquire();
-        if (orderIndex == -1) {
-            return -1;
+        int qty = (int) quantity;
+        boolean isBuy = side == Order.SIDE_BUY;
+        int currLevelIdx = isBuy ? headAskLevel : headBidLevel;
+        byte targetSide = isBuy ? Order.SIDE_SELL : Order.SIDE_BUY;
+        while (currLevelIdx != -1 && qty > 0) {
+            PriceLevel currLevel = priceLevelPool.get(currLevelIdx);
+            boolean canMatch = isBuy ? currLevel.getPrice() <= price : currLevel.getPrice() >= price;
+            if (!canMatch) {
+                break;
+            }
+            int nextLevelIdx = currLevel.getNextLevelIndex();
+            int orderIdx = currLevel.getHeadIndex();
+            while (orderIdx != -1 && qty > 0) {
+                Order order = orderPool.get(orderIdx);
+                int orderNextIdx = order.getNextIndex();
+                long orderQty = order.getQuantity();
+                int matchQty = Math.min(qty, (int) orderQty);
+                qty -= matchQty;
+                order.setQuantity(orderQty - matchQty);
+                currLevel.setTotalQuantity(currLevel.getTotalQuantity() - matchQty);
+                if (order.getQuantity() == 0) {
+                    currLevel.removeOrder(orderIdx, orderPool);
+                    order.setPriceLevelIndex(-1);
+                    orderPool.release(orderIdx);
+                }
+                orderIdx = orderNextIdx;
+            }
+            if (currLevel.getHeadIndex() == -1) {
+                removeLevel(currLevelIdx, targetSide);
+            }
+            currLevelIdx = nextLevelIdx;
         }
-        Order order = orderPool.get(orderIndex);
-        order.reset(orderId, price, quantity, side, type);
-        int levelIndex = findOrInsertLevel(price, side);
-        if (levelIndex == -1) {
-            orderPool.release(orderIndex);
-            return -1;
+        if (qty > 0) {
+            int orderIndex = orderPool.acquire();
+            if (orderIndex == -1) {
+                return -1;
+            }
+            Order order = orderPool.get(orderIndex);
+            order.reset(orderId, price, qty, side, type);
+            int levelIndex = findOrInsertLevel(price, side);
+            if (levelIndex == -1) {
+                orderPool.release(orderIndex);
+                return -1;
+            }
+            order.setPriceLevelIndex(levelIndex);
+            PriceLevel level = priceLevelPool.get(levelIndex);
+            level.addOrder(orderIndex, orderPool);
+            return orderIndex;
         }
-        order.setPriceLevelIndex(levelIndex);
-        PriceLevel level = priceLevelPool.get(levelIndex);
-        level.addOrder(orderIndex, orderPool);
-        return orderIndex;
+        return -2;
     }
 
     public boolean cancelOrder(int orderIndex) {
