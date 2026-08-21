@@ -4,12 +4,14 @@ public class OrderBook {
 
     private final OrderPool orderPool;
     private final PriceLevelPool priceLevelPool;
+    private final OrderIdMapper orderIdMapper;
     private int headBidLevel = -1; // Highest bid (buy)
     private int headAskLevel = -1; // Lowest ask (sell)
 
-    public OrderBook(int orderPoolSize, int priceLevelPoolSize) {
+    public OrderBook(int orderPoolSize, int priceLevelPoolSize, int capacity) {
         this.orderPool = new OrderPool(orderPoolSize);
         this.priceLevelPool = new PriceLevelPool(priceLevelPoolSize);
+        this.orderIdMapper = new OrderIdMapper(capacity);
     }
 
     public int addOrder(long orderId, long price, long quantity, byte side, byte type) {
@@ -24,22 +26,7 @@ public class OrderBook {
                 break;
             }
             int nextLevelIdx = currLevel.getNextLevelIndex();
-            int orderIdx = currLevel.getHeadIndex();
-            while (orderIdx != -1 && qty > 0) {
-                Order order = orderPool.get(orderIdx);
-                int orderNextIdx = order.getNextIndex();
-                long orderQty = order.getQuantity();
-                int matchQty = Math.min(qty, (int) orderQty);
-                qty -= matchQty;
-                order.setQuantity(orderQty - matchQty);
-                currLevel.setTotalQuantity(currLevel.getTotalQuantity() - matchQty);
-                if (order.getQuantity() == 0) {
-                    currLevel.removeOrder(orderIdx, orderPool);
-                    order.setPriceLevelIndex(-1);
-                    orderPool.release(orderIdx);
-                }
-                orderIdx = orderNextIdx;
-            }
+            qty = matchPriceLevel(currLevelIdx, qty);
             if (currLevel.getHeadIndex() == -1) {
                 removeLevel(currLevelIdx, targetSide);
             }
@@ -47,9 +34,7 @@ public class OrderBook {
         }
         if (qty > 0) {
             int orderIndex = orderPool.acquire();
-            if (orderIndex == -1) {
-                return -1;
-            }
+            if (orderIndex == -1) return -1;
             Order order = orderPool.get(orderIndex);
             order.reset(orderId, price, qty, side, type);
             int levelIndex = findOrInsertLevel(price, side);
@@ -60,13 +45,15 @@ public class OrderBook {
             order.setPriceLevelIndex(levelIndex);
             PriceLevel level = priceLevelPool.get(levelIndex);
             level.addOrder(orderIndex, orderPool);
+            orderIdMapper.put(orderId, orderIndex);
             return orderIndex;
         }
         return -2;
     }
 
-    public boolean cancelOrder(int orderIndex) {
-        if (orderIndex < 0 || orderIndex >= orderPool.getCapacity()) return false;
+    public boolean cancelOrder(long orderId) {
+        int orderIndex = orderIdMapper.get(orderId);
+        if (orderIndex == -1) return false;
         Order order = orderPool.get(orderIndex);
         int levelIndex = order.getPriceLevelIndex();
         if (levelIndex == -1) return false;
@@ -76,6 +63,7 @@ public class OrderBook {
         if (level.getHeadIndex() == -1) removeLevel(levelIndex, side);
         order.setPriceLevelIndex(-1);
         orderPool.release(orderIndex);
+        orderIdMapper.remove(orderId);
         return true;
     }
 
@@ -88,22 +76,7 @@ public class OrderBook {
         while (currLevelIdx != -1 && qty > 0) {
             PriceLevel currLevel = priceLevelPool.get(currLevelIdx);
             nextLevelIdx = currLevel.getNextLevelIndex();
-            int orderIdx = currLevel.getHeadIndex();
-            while (orderIdx != -1 && qty > 0) {
-                Order order = orderPool.get(orderIdx);
-                int orderNextIdx = order.getNextIndex();
-                long orderQty = order.getQuantity();
-                int matchQty = Math.min(qty, (int) orderQty);
-                qty -= matchQty;
-                order.setQuantity(orderQty - matchQty);
-                currLevel.setTotalQuantity(currLevel.getTotalQuantity() - matchQty);
-                if (order.getQuantity() == 0) {
-                    currLevel.removeOrder(orderIdx, orderPool);
-                    order.setPriceLevelIndex(-1);
-                    orderPool.release(orderIdx);
-                }
-                orderIdx = orderNextIdx;
-            }
+            qty = matchPriceLevel(currLevelIdx, qty);
             if (currLevel.getHeadIndex() == -1) {
                 removeLevel(currLevelIdx, targetSide);
             }
@@ -128,6 +101,28 @@ public class OrderBook {
 
     public Order getOrder(int index) {
         return orderPool.get(index);
+    }
+
+    private int matchPriceLevel(int levelIdx, int qty) {
+        PriceLevel currLevel = priceLevelPool.get(levelIdx);
+        int orderIdx = currLevel.getHeadIndex();
+        while (orderIdx != -1 && qty > 0) {
+            Order order = orderPool.get(orderIdx);
+            int orderNextIdx = order.getNextIndex();
+            long orderQty = order.getQuantity();
+            int matchQty = Math.min(qty, (int) orderQty);
+            qty -= matchQty;
+            order.setQuantity(orderQty - matchQty);
+            currLevel.setTotalQuantity(currLevel.getTotalQuantity() - matchQty);
+            if (order.getQuantity() == 0) {
+                currLevel.removeOrder(orderIdx, orderPool);
+                orderIdMapper.remove(order.getOrderId());
+                order.setPriceLevelIndex(-1);
+                orderPool.release(orderIdx);
+            }
+            orderIdx = orderNextIdx;
+        }
+        return qty;
     }
 
     private void removeLevel(int levelIndex, byte side) {

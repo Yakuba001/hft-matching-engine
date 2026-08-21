@@ -11,15 +11,15 @@ public class OrderBookTest {
 
     @BeforeEach
     void setUp() {
-        orderBook = new OrderBook(10, 5);
+        orderBook = new OrderBook(10, 5, 10);
     }
 
     @Test
     void shouldMaintainBestBidAndAskCorrectly() {
-        orderBook.addOrder(1, 98, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
-        orderBook.addOrder(2, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
-        orderBook.addOrder(3, 105, 10, Order.SIDE_SELL, Order.TYPE_LIMIT);
-        orderBook.addOrder(4, 102, 10, Order.SIDE_SELL, Order.TYPE_LIMIT);
+        orderBook.addOrder(1L, 98, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+        orderBook.addOrder(2L, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+        orderBook.addOrder(3L, 105, 10, Order.SIDE_SELL, Order.TYPE_LIMIT);
+        orderBook.addOrder(4L, 102, 10, Order.SIDE_SELL, Order.TYPE_LIMIT);
 
         assertEquals(100, orderBook.getBestBidPrice());
         assertEquals(102, orderBook.getBestAskPrice());
@@ -27,21 +27,20 @@ public class OrderBookTest {
 
     @Test
     void shouldRemoveLevelWhenAllOrdersCancelled() {
-        orderBook.addOrder(1, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
-        int secondBid = orderBook.addOrder(2, 105, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+        orderBook.addOrder(1L, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
 
-        boolean isCancel = orderBook.cancelOrder(secondBid);
+        boolean isCancel = orderBook.cancelOrder(1L);
 
-        assertEquals(100, orderBook.getBestBidPrice());
+        assertFalse(orderBook.cancelOrder(1L));
+        assertEquals(0, orderBook.getBestBidPrice());
         assertTrue(isCancel);
-        assertFalse(orderBook.cancelOrder(secondBid));
     }
 
     @Test
     void shouldMaintainFifoOrderWithinSamePriceLevel() {
-        int firstIdx = orderBook.addOrder(1, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
-        int secondIdx = orderBook.addOrder(2, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
-        int thirdIdx = orderBook.addOrder(3, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+        int firstIdx = orderBook.addOrder(1L, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+        int secondIdx = orderBook.addOrder(2L, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+        int thirdIdx = orderBook.addOrder(3L, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
 
         Order firstOrder = orderBook.getOrder(firstIdx);
         Order secondOrder = orderBook.getOrder(secondIdx);
@@ -57,29 +56,25 @@ public class OrderBookTest {
 
     @Test
     void shouldRecyclePoolsWithoutAllocations() {
-        int[] orderIndices = new int[10];
-        for (int i = 0; i < 10; i++) {
-            int idx = orderBook.addOrder(i, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
-            assertNotEquals(-1, idx);
-            orderIndices[i] = idx;
+        for (long orderId = 0; orderId < 10; orderId++) {
+            int idx = orderBook.addOrder(orderId, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+            assertNotEquals(-1, idx, "Ордер должен успешно добавиться");
         }
-        int overflowIdx = orderBook.addOrder(99, 200, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
-        assertEquals(-1, overflowIdx);
-
-        for (int i = 0; i < 10; i++) {
-            boolean cancelled = orderBook.cancelOrder(orderIndices[i]);
-            assertTrue(cancelled);
+        int overflowIdx = orderBook.addOrder(999L, 200, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+        assertEquals(-1, overflowIdx, "Пул переполнен, ожидаем -1");
+        for (long orderId = 0; orderId < 10; orderId++) {
+            boolean cancelled = orderBook.cancelOrder(orderId);
+            assertTrue(cancelled, "Ордер " + orderId + " должен успешно отмениться");
         }
-
-        for (int i = 0; i < 10; i++) {
-            int recycledIdx = orderBook.addOrder(i + 100, 300, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
-            assertNotEquals(-1, recycledIdx);
+        for (long orderId = 100; orderId < 110; orderId++) {
+            int recycledIdx = orderBook.addOrder(orderId, 300, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
+            assertNotEquals(-1, recycledIdx, "Слот в пуле должен переиспользоваться");
         }
     }
 
     @Test
     void shouldHandlePoolExhaustionGracefully() {
-        OrderBook exhaustedOrderBook = new OrderBook(2, 1);
+        OrderBook exhaustedOrderBook = new OrderBook(2, 1, 10);
 
         int firstIdx = exhaustedOrderBook.addOrder(1, 100, 10, Order.SIDE_BUY, Order.TYPE_LIMIT);
         assertNotEquals(-1, firstIdx);
@@ -89,5 +84,36 @@ public class OrderBookTest {
 
         int thirdIdx = exhaustedOrderBook.addOrder(3, 100, 15, Order.SIDE_BUY, Order.TYPE_LIMIT);
         assertNotEquals(-1, thirdIdx);
+    }
+
+    @Test
+    void shouldMatchAggressiveLimitOrderPartiallyAndFully() {
+        orderBook.addOrder(1L, 100, 50, Order.SIDE_SELL, Order.TYPE_LIMIT);
+        int res2 = orderBook.addOrder(2L, 105, 20, Order.SIDE_BUY, Order.TYPE_LIMIT);
+
+        boolean cancelSecond = orderBook.cancelOrder(2L);
+        long bestAskPrice = orderBook.getBestAskPrice();
+        boolean cancelFirst = orderBook.cancelOrder(1L);
+
+        assertEquals(-2, res2);
+        assertFalse(cancelSecond);
+        assertTrue(cancelFirst);
+        assertEquals(100, bestAskPrice);
+    }
+
+    @Test
+    void shouldMatchMarketOrderAcrossMultipleLevels() {
+        orderBook.addOrder(10L, 100, 10, Order.SIDE_SELL, Order.TYPE_LIMIT);
+        orderBook.addOrder(20L, 101, 15, Order.SIDE_SELL, Order.TYPE_LIMIT);
+
+        int matchedQty = orderBook.matchMarketOrder(Order.SIDE_BUY, 20);
+        boolean cancelFirst = orderBook.cancelOrder(10L);
+        long bestAskPrice = orderBook.getBestAskPrice();
+        boolean cancelSecond = orderBook.cancelOrder(20L);
+
+        assertEquals(20, matchedQty);
+        assertFalse(cancelFirst);
+        assertEquals(101, bestAskPrice);
+        assertTrue(cancelSecond);
     }
 }
