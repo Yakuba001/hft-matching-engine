@@ -38,9 +38,10 @@ public class CommandRingBuffer {
         this.tail = 0;
     }
 
-    public OrderCommand next() {
+    public void push(long orderId, byte type, byte side, long price, long quantity) {
         int currentTail = 0;
         int currentHead = 0;
+
         while (running) {
             currentTail = (int) TAIL_HANDLE.getVolatile(this);
             currentHead = (int) HEAD_HANDLE.getAcquire(this);
@@ -50,13 +51,15 @@ public class CommandRingBuffer {
             }
             break;
         }
-        if (!running && (int) TAIL_HANDLE.getVolatile(this) == (int) HEAD_HANDLE.getAcquire(this)) {
-            return null;
+
+        if (!running) {
+            return;
         }
+
         int index = currentTail & (buffer.length - 1);
         OrderCommand cmd = buffer[index];
+        cmd.reset(orderId, type, side, price, quantity);
         TAIL_HANDLE.setRelease(this, currentTail + 1);
-        return cmd;
     }
 
     public OrderCommand poll() {

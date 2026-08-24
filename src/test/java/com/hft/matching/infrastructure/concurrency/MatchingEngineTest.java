@@ -24,12 +24,9 @@ public class MatchingEngineTest {
     void consumerTest() {
         Thread consumer = new Thread(matchingEngine);
         consumer.start();
-        OrderCommand cmd = buffer.next();
-        OrderCommand cmd2 = buffer.next();
-        OrderCommand cmd3 = buffer.next();
-        cmd.reset(1L, OrderCommand.ADD, OrderCommand.SIDE_BUY, 100L, 2L);
-        cmd2.reset(2L, OrderCommand.ADD, OrderCommand.SIDE_BUY, 100L, 2L);
-        cmd3.reset(3L, OrderCommand.ADD, OrderCommand.SIDE_SELL, 100L, 2L);
+        buffer.push(1L, OrderCommand.ADD, OrderCommand.SIDE_BUY, 100L, 2L);
+        buffer.push(2L, OrderCommand.ADD, OrderCommand.SIDE_BUY, 100L, 2L);
+        buffer.push(3L, OrderCommand.ADD, OrderCommand.SIDE_SELL, 100L, 2L);
         try {
             Thread.sleep(100);
         } catch (InterruptedException e) {
